@@ -1,0 +1,1119 @@
+#import required libraries
+library(raster)
+library(terra)
+library(rgdal)
+library(sf)
+library(RStoolbox)
+library(ggplot2)
+library(gdalcubes)
+library(randomForest)
+library(caret)
+library(patchwork)
+library(tidyverse)
+library(rpart)
+library(rpart.plot)
+library(rasterVis)
+library(mapedit)
+library(mapview)
+library(forcats)
+library(data.table)
+library(devtools)
+library(sen2r)
+library(remotes)
+library(getSpatialData)
+library(sp)
+library(spData)
+library(dplyr)
+library(tidyr)
+library(doParallel)
+library(stringr)
+library(viridis)
+library(e1071)
+library(caret)
+library(kernlab)
+library(maptree)
+library(NeuralNetTools)
+library(kknn)
+library(rgeos)
+library(dat)
+library(plotly)
+library(snow)
+library(IRdisplay)
+library(RColorBrewer)
+library(glcm)
+library(mlr)
+library(parallelMap)
+library(OpenLand)
+library(lulcc)
+library(tmap)
+library(landscapetools)
+library(landscapemetrics)
+library(ggplot2)
+library(grid)
+library(ggmap)
+library(maps)
+#library(rworldmap)
+library(sf)
+library(dplyr)
+library(ICAMSxtra)
+library(tidyr)
+library(Rmisc)
+library(gmodels)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(ggspatial)
+library(ggmap)
+
+# Define an archive directory:
+set_archive("C:/vaia bostrico")
+
+get_products() 
+"sentinel-2" 
+set_aoi() #set and view the area of interest
+view_aoi()
+get_aoi()
+time_range =  c("2021-06-17" , "2021-06-30") #set time range
+platform = "Sentinel-2" #choose platform
+login_CopHub(username = "anna_candotti") #login to Esa SCI-HUB
+
+#get a Sentinel-2 query with specified parameters 
+?getSentinel_records
+query = getSentinel_records(time_range, "Sentinel-2")
+
+str(query)
+
+#examine query dataframe
+query$cloudcov
+query$tile_id 
+query$level
+#you can also specify level of processing - level 1C is before correction, 2A after correction
+query10 = query[query$cloudcov < 10  & query$level == "Level-2A",] 
+query10$record_id
+
+set_archive("C:/vaia bostrico")
+plot_records(query10)
+records = get_previews(query10)
+view_previews(records[2,])
+datasets <- getSentinel_data(records)
+order_data(records)
+
+#some interesting tools from sen2r package - very good package for processing Sentinel-2 images; also tools for downloading data
+?s2_translate #enables to create one stack (one, multi-band, geotiff image)
+?s2_calcindices #many many indices 
+?s2_mask #masking clouds
+
+
+
+
+unzip(zipfile = datasets, exdir = "./data")
+
+
+### Crop raster images
+
+Read and crop the raster bands: B2, B3, B4, B5, B6, B7, B8, B8A, B11 and B12:
+```{r read-jp2, eval=FALSE}
+# Path to jp2 files
+jp2_path <- "./data/S2B_MSIL2A_20181016T092029_N0209_R093_T34TFR_20181016T143428.SAFE/GRANULE/L2A_T34TFR_A008413_20181016T092720/IMG_DATA/"
+# From the folder "R10m", read B02, B03, B04 and B08. They are the only files containing "B".
+jp2_10m <- list.files(paste0(jp2_path, "R10m"), pattern = ".*B.*jp2$", full.names = TRUE)
+# From the folder "R20m", read B5, B6, B7, B8A, B11 and B12.
+jp2_20m <- list.files(paste0(jp2_path, "R20m"), pattern = ".*B.*[56781].*jp2$", full.names = TRUE)
+# Read all bands
+rst_lst <- lapply(c(jp2_10m, jp2_20m), FUN = raster)
+```
+#error: wd path is too long
+setwd("C:/vaia bostrico_datasets/sentinel-2/S2A_MSIL2A_20210821T101031_N0301_R022_T33TVM_20210821T120555/S2A_MSIL2A_20210821T101031_N0301_R022_T33TVM_20210821T120555.SAFE/GRANULE/L2A_T33TVM_A032194_20210821T101418/IMG_DATA/R10m")
+jp2_10m <- list.files(pattern = ".*B.*jp2$", full.names = TRUE)
+setwd("C:/vaia bostrico_datasets/sentinel-2/S2A_MSIL2A_20210821T101031_N0301_R022_T33TVM_20210821T120555/S2A_MSIL2A_20210821T101031_N0301_R022_T33TVM_20210821T120555.SAFE/GRANULE/L2A_T33TVM_A032194_20210821T101418/IMG_DATA/R20m")
+jp2_20m <- list.files(pattern = ".*B.*[56781].*jp2$", full.names = TRUE)
+rst_lst <-  lapply(c(jp2_10m, jp2_20m), FUN = raster)
+stack <- stack(rst_lst)
+
+#shorter path
+setwd("C:/vaia bostrico/s2l2a_2021_06_14")
+jp2 <- list.files(pattern = ".jp2")
+rst_list <- lapply(jp2, FUN = raster)
+
+
+#resampling all bands to 10m pixels
+jp2 <- list.files(pattern = ".jp2")
+# to make this reproducible
+f <- system.file("external/test.grd", package="raster")    
+ff <- rep(jp2, 3)
+
+rr <- lapply(ff, raster)
+standard <- rr[[1]]
+rs <- list(standard)
+for (i in 2:length(rr)) {
+    rs[[i]] <- resample(rr[[i]], standard, method='ngb')
+}
+
+s <- stack(rs)
+
+setwd("C:/vaia bostrico/s2l2a_2019_06_30")
+rlist <-list.files(pattern=".tif$")
+import <- lapply(rlist,raster) 
+import 
+s_07_19 <- stack(import)
+
+
+#cloud mask for entire scene
+setwd("C:/vaia bostrico/cld_msk_10m")
+CLD_MSK_06_21 <- raster("MSK_CLD_06_21_10m.tif")
+CLD_MSK_06_21 [CLD_MSK_06_21 !=0] <- NA
+
+setwd("C:/vaia bostrico/stack_2021_06_14")
+rlist <-list.files(pattern=".tif$")
+import <- lapply(rlist,raster) 
+import 
+s_06_21<- stack(import)
+
+m2_s_06_21 <- mask(s_06_21, CLD_MSK_06_21, inverse=FALSE, updatevalue=NA)
+
+#apply forest mask
+setwd("C:/vaia bostrico")
+bosco_abete_rosso <- shapefile("bosco_abete_rosso_def.shp")
+
+m3_s_06_21 <- mask(m2_s_06_21, bosco_abete_rosso)
+raster::writeRaster(m3_s_06_21, filename=file.path("C:/vaia bostrico", "m3_s_06_21.tif") , bylayer=TRUE, format='GTiff', overwrite=TRUE)
+
+setwd("C:/vaia bostrico")
+aoi_utm33 <- shapefile("aoi_utm33.shp")
+r_ext <- raster("raster_aoi.tif")
+
+#crop rasters by raster extent
+setwd("C:/vaia bostrico/stack_06_21")
+rlist <-list.files(pattern=".tif$")
+import <- lapply(rlist,raster) 
+import 
+s_06_21<- stack(import) 
+s_06_21 <- brick(s_06_21)
+
+rst_crop_lst <- lapply(import, FUN = raster::crop, y = r_ext)
+
+stack_06_21 <- stack(rst_crop_lst)
+plot(stack_06_21)
+
+raster::writeRaster(stack_06_21, filename=file.path("C:/vaia bostrico", "stack_cr_06_21.tif") , bylayer=TRUE, format='GTiff', overwrite=TRUE)
+
+#slope and aspect from DEM
+setwd("C:/vaia bostrico")
+dem <- rast("DEM_tot.tif")
+slope <- terrain(dem, v="slope", neighbors=4, unit="degrees", filename="slope.tif", overwrite=TRUE)
+aspect <- terrain(dem, v="aspect", neighbors=4, unit="degrees", filename="aspect.tif", overwrite=TRUE)
+r <- raster(f)
+x <- rasterToContour(r)
+class(x)
+plot(r)
+plot(x, add=TRUE)
+
+dem <- raster("DEM.tif")
+isolin <- rasterToContour(dem)
+class(isolin)
+myCol = terrain.colors(4)
+plot(dem, col=myCol)
+p <- plot(isolin, add=TRUE)
+
+
+
+slope <- raster("slope.tif")
+aspect <- raster("aspect.tif")
+hillshade_07_20 <- hillShade(slope, aspect, angle=56, direction=125, filename='hillshade_07_20.tif', normalize=FALSE)
+
+#vegetation indices
+si_06_21 <- spectralIndices(m3_stack_06_21, blue=1, green =2, red=3, nir=7, redEdge1=4, redEdge=5, redEdge3=6, swir2=8, swir3=9)
+
+#classification
+setwd("C:/vaia bostrico/m3_stack_07_20")
+rlist <-list.files(pattern=".tif$") 
+rlist
+import <- lapply(rlist,raster) 
+import 
+img <- stack(import) 
+img <- brick(m3_stack_07_19)
+setwd("C:/vaia bostrico")
+shp <- shapefile("training_sites_07_20_2.shp")
+compareCRS(shp, img)
+     
+     setwd("C:/vaia bostrico")
+bosco_abete_rosso <- shapefile("bosco_abete_rosso_def.shp")
+m3_stack_07_20 <-raster::mask(img, bosco_abete_rosso) 
+raster::writeRaster(m3_stack_07_20, filename=file.path("C:/vaia bostrico", "m3_stack_07_20.tif") , bylayer=TRUE, format='GTiff', overwrite=TRUE)                     
+       
+
+ 
+names(img) <- c("B11", "B12", "B03", "B04", "B05", "B06", "B07", "B08", "B02")
+covs <- stack(img, NDRS_07_20, RENDVI_07_20, RENDVI2_07_20, NDVI_07_20, REIP_07_20, DWSI_07_20, NDWI2_07_20, NDREI1_07_20, NDREI2_07_20, TCW_07_20, NMDI_07_20)
+names(covs) <- c(names(img), "NDRS",  "RENDVI", "RENDVI2", "NDVI", "REIP", "DWSI", "NDWI2", "NDREI1", "NDREI2", "TCW", "NMDI") 
+names(covs)
+
+setwd("C:/vaia bostrico/NDRS_2020")
+     NDRS_07_20 <- raster("NDRS_07_20.tif")
+     
+setwd("C:/vaia bostrico/RENDVI_2020")
+         RENDVI_07_20 <- raster("RENDVI_07_20.tif")
+     
+     setwd("C:/vaia bostrico/RENDVI2_2020")
+      RENDVI2_07_20 <- raster("RENDVI2_07_20.tif")
+     
+    setwd("C:/vaia bostrico/NDVI_2020")
+      NDVI_07_20 <- raster("NDVI_07_20.tif")  
+     
+      setwd("C:/vaia bostrico/REIP_2020")
+      REIP_07_20 <- raster("REIP_07_20.tif")  
+     
+       setwd("C:/vaia bostrico/DWSI_2020")
+      DWSI_07_20 <- raster("DWSI_07_20.tif")  
+     
+      setwd("C:/vaia bostrico/NDWI2_2020")
+     NDWI2_07_20 <- raster("NDWI2_07_20.tif")  
+     
+      setwd("C:/vaia bostrico/NDREI1_2020")
+    NDREI1_07_20 <- raster("NDREI1_07_20.tif")   
+     
+     setwd("C:/vaia bostrico/NDREI2_2020")
+    NDREI2_07_20 <- raster("NDREI2_07_20.tif") 
+     
+     setwd("C:/vaia bostrico/TCW_2020")
+    TCW_07_20 <- raster("TCW_07_20.tif")  
+      setwd("C:/vaia bostrico/NMDI_2020")
+    NMDI_07_20 <- raster("NMDI_07_20.tif")  
+     
+     
+setwd("C:/vaia bostrico/SWI")
+SWI_07_20 <- raster("SWI_2020_07_01.tif")
+
+setwd("C:/vaia bostrico/LST")
+LST_07_20 <- raster("LST2_C_2020_07_07.tif")
+     
+x <- raster()
+x
+                      
+projection(x) <- " +proj=utm +zone=33 +datum=WGS84 +units=m +no_defs"
+x
+
+setwd("C:/vaia bostrico/m2_stack_07_20")
+r <- raster("m2_stack_07_20_1.tif")
+
+#set extent
+ext <- setExtent(x, r, keepres=TRUE, snap=FALSE)
+extent(x) <- ext
+
+# change resolution
+res(x) <- 10
+res(x)
+
+# Create raster template
+template_rst <- x   
+SWI_07_20 <- raster::resample(SWI_07_20, template_rst, method="ngb")
+raster::writeRaster(SWI_07_20, filepath="C:/vaia bostrico", filename="SWI_07_20.tif", format='GTiff', overwrite=TRUE)   
+     
+LST_07_20 <- raster::resample(LST_07_20, template_rst, method="ngb")
+raster::writeRaster(LST_07_20, filepath="C:/vaia bostrico", filename="SWI_07_20.tif", format='GTiff', overwrite=TRUE)   
+     
+setwd("C:/vaia bostrico/TCW_07")
+TCW_07_20 <- raster("TCW_07_20.tif")
+     
+setwd("C:/vaia bostrico/NDWI2_07")     
+NDWI2_07_20 <- raster("NDWI2_07_20.tif")
+     
+covs <- stack(img, NDWI2_07_20, TCW_07_20)
+names(covs) <- c(names(img_fus_07_20), "NDWI2", "TCW")
+names(covs)
+
+     
+plotRGB(img, b=9, g=3, r=4, stretch="lin")
+
+NDVI_07_20 <- spectralIndices(m2_stack_07_20, indices="NDVI", blue=9, green = 3, red = 4, nir= 8, redEdge1 = 5, redEdge = 6, redEdge3=7, swir2 = 1, swir3 = 2)  
+     
+     
+REIP_07_20 <- spectralIndices(m2_stack_07_20, indices="REIP", blue=9, green = 3, red = 4, nir= 8, redEdge1 = 5, redEdge = 6, redEdge3=7, swir2 = 1, swir3 = 2)           
+raster::writeRaster(REIP_07_20, filepath="C:/vaia bostrico", filename="REIP_07_20.tif", format='GTiff', overwrite=TRUE)   
+     
+GNDVI_07_20 <- spectralIndices(m2_stack_07_20, indices="GNDVI", blue=9, green = 3, red = 4, nir= 8, redEdge1 = 5, redEdge = 6, redEdge3=7, swir2 = 1, swir3 = 2) 
+raster::writeRaster(GNDVI_07_20, filepath="C:/vaia bostrico", filename="GNDVI_07_20.tif", format='GTiff', overwrite=TRUE)   
+     
+MCARI_07_20 <- spectralIndices(m2_stack_07_20, indices="MCARI", blue=9, green = 3, red = 4, nir= 8, redEdge1 = 5, redEdge = 6, redEdge3=7, swir2 = 1, swir3 = 2) 
+raster::writeRaster(MCARI_07_20, filepath="C:/vaia bostrico", filename="MCARI_07_20.tif", format='GTiff', overwrite=TRUE) 
+          
+NDVI_07_20_df <- as.data.frame(NDVI_07_20, xy = TRUE)
+library(RColorBrewer)
+brewer.pal(9, "YlGn")
+[1] "#FFFFE5" "#F7FCB9" "#D9F0A3" "#ADDD8E" "#78C679" "#41AB5D" "#238443"
+[8] "#006837" "#004529"
+Then we will pass those color codes to the colorRampPalette function, which will interpolate from those colors a more nuanced color range.
+
+green_colors <- brewer.pal(9, "YlGn") %>%
+  colorRampPalette()
+     
+ memory.limit(1000000)
+     
+     
+ NDVI_07_20_plot <- ggplot() +
+   geom_raster(data = NDVI_07_20_df , aes(x = x, y = y)) +
+   ggtitle("07/20 NDVI") + 
+   theme_void() + 
+   theme(plot.title = element_text(hjust = 0.5, face = "bold"), 
+     plot.subtitle = element_text(hjust = 0.5)) + 
+   scale_fill_gradientn(name = "NDVI", colours = green_colors(20))
+NDVI_07_20_plot
+     
+     
+raster::writeRaster(NDVI_07_20, filepath="C:/vaia bostrico", filename="ndvi_07_20.tif", format='GTiff', overwrite=TRUE)
+
+#Normalised Difference Water Index with swir2, nir 
+NDWI2_07_20 <- spectralIndices(m2_stack_07_20, indices="NDWI2", blue=9, green = 3, red = 4, nir= 8, redEdge1 = 5, redEdge = 6, redEdge3=7, swir2 = 1, swir3 = 2)
+raster::writeRaster(NDWI2_07_20, filepath="C:/vaia bostrico", filename="ndwi2_07_20.tif", format='GTiff', overwrite=TRUE) 
+
+     
+   #Normalised Difference Red Edge Index 1 (red edge 1, red edge 2)
+NDREI1_07_20 <- spectralIndices(m2_stack_07_20, indices="NDREI1", blue=9, green = 3, red = 4, nir= 8, redEdge1 = 5, redEdge = 6, redEdge3=7, swir2 = 1, swir3 = 2)
+raster::writeRaster(NDREI1_07_20, filepath="C:/vaia bostrico", filename="NDREI1_07_20", format='GTiff', overwrite=TRUE)     
+     
+    # Normalised Difference Red Edge Index 2 (red edge 1, red edge 3)
+     NDREI2_07_20 <- spectralIndices(m2_stack_07_20, indices="NDREI2", blue=9, green = 3, red = 4, nir= 8, redEdge1 = 5, redEdge = 6, redEdge3=7, swir2 = 1, swir3 = 2)
+     raster::writeRaster(NDREI2_07_20, filepath="C:/vaia bostrico", filename="NDREI2_07_20", format='GTiff', overwrite=TRUE)     
+
+B08_07_20 <- raster("m2_stack_07_20_8.tif")
+B11_07_20 <- raster("m2_stack_07_20_1.tif")
+B12_07_20 <- raster("m2_stack_07_20_2.tif")
+B04_07_20 <- raster("m2_stack_07_20_4.tif")
+B02_07_20 <- raster("m2_stack_07_20_9.tif")
+B03_07_20 <- raster("m2_stack_07_20_3.tif")     
+B05_07_20 <- raster("m2_stack_07_20_5.tif")  
+B06_07_20 <- raster("m2_stack_07_20_6.tif")  
+          
+ DRS <-  sqrt((B12_07_20)^2 + (B04_07_20)^2)
+DRS[DRS>2001] <- NA
+DRSmin <- 0
+DRSmax <- 2000
+NDRS_07_20 <- ((DRS - DRSmin)/(DRSmax - DRSmin))
+raster::writeRaster(NDRS_07_20, filepath="C:/vaia bostrico", filename="NDRS_07_20", format='GTiff', overwrite=TRUE) 
+         
+     RENDVI_07_20 <- (B05_07_20-B04_07_20)/(B05_07_20+B04_07_20)
+raster::writeRaster(RENDVI_07_20, filepath="C:/vaia bostrico", filename="RENDVI_07_20.tif", format='GTiff', overwrite=TRUE) 
+
+RENDVI2_07_20 <- (B06_07_20-B04_07_20)/(B06_07_20+B04_07_20)
+raster::writeRaster(RENDVI2_07_20, filepath="C:/vaia bostrico", filename="RENDVI2_07_20.tif", format='GTiff', overwrite=TRUE)
+     
+DWSI_07_20 <- (B08_07_20 + B03_07_20)/(B11_07_20+B04_07_20)
+raster::writeRaster(DWSI_07_20, filepath="C:/vaia bostrico", filename="DWSI_07_20.tif", format='GTiff', overwrite=TRUE)
+     
+NMDI_07_20 <-  (B08_07_20 - (B11_07_20-B12_07_20))/(B08_07_20 + (B11_07_20-B12_07_20))
+raster::writeRaster(NMDI_07_20, filepath="C:/vaia bostrico", filename="NMDI_07_20", format='GTiff', overwrite=TRUE)      
+     
+     
+TCG = −0.28482 ∗ B02 − 0.24353 ∗ B03 − 0.54364 ∗ B04 + 0.72438 ∗ B08 + 0.084011 ∗ B11 − 0.180012 ∗ B12,	(3)
+TCW = 0.1509 ∗ B02 + 0.1973 ∗ B03 + 0.3279 ∗ B04 + 0.3406 ∗ B08 − 0.7112 ∗ B11 − 0.4572 ∗ B12
+     
+TCG_07_20 = - 0.28482 * B02_07_20  - 0.24353 * B03_07_20 - 0.54364 * B04_07_20 + 0.72438 * B08_07_20 + 0.084011 * B11_07_20 - 0.180012 * B12_07_20
+raster::writeRaster(TCG_07_20, filepath="C:/vaia bostrico", filename="TCG_07_20", format='GTiff', overwrite=TRUE)         
+TCW = 0.1509 * B02_07_20 + 0.1973 * B03_07_20 + 0.3279 * B04_07_20 + 0.3406 * B08_07_20 - 0.7112 * B11_07_20 - 0.4572 * B12_07_20
+raster::writeRaster(TCW, filepath="C:/vaia bostrico", filename="TCW_07_20", format='GTiff', overwrite=TRUE)      
+          
+#logistic regression between red and swir band     
+B04_07_20 <- raster("m2_stack_07_20_4.tif")
+B12_07_20 <- raster("m2_stack_07_20_2.tif")
+     
+s <- stack(B04_07_20 , B12_07_20)
+v <- data.frame(values(s))
+     #if s is too large:
+v <- sampleRegular(s, 100000)  
+v <- data.frame(na.omit(v))
+names(v) <- c('B04_07_20', 'B12_07_20')
+m <- lm(B04_07_20 ~ B12_07_20, data=v)
+m  
+p <- predict(s,m)     
+   residuals <- s$red - p  
+     
+     
+p <- ggplot(m, aes(x = B04_07_20 , y = B12_07_20)) +
+  geom_point() +
+  geom_abline(intercept =   -270, slope =  0.7, col = "red")
+     
+
+anova(m)
+summary(m)     
+     
+PRS_07_20 <- (0.7 ^ 2 * B12_07_20 + 0.7* B04_07_20  + (-270))/ sqrt(0.7 ^ 2 * (1 + 0.7^ 2))
+NPRS_07_20 <- (PRS_07_20-( -315))/(21513 -( -315))
+raster::writeRaster(NPRS_fus_07_20 , filepath="C:/vaia bostrico", filename="NPNG_fus_07_20", format='GTiff', overwrite=TRUE) 
+
+     
+     
+levels(as.factor(shp$classes))
+
+
+for (i in 1:length(unique(shp$classes))) {cat(paste0(i, " ", levels(as.factor(shp$classes))[i]), sep="\n")}
+
+ 
+  
+# extract samples with class labels and put them all together in a dataframe
+
+smp <- raster::extract(img, shp, df=TRUE)
+smp$cl <- as.factor( shp$classes[ match(smp$ID, seq(nrow(shp)) ) ] )
+smp <- smp[-1]
+
+smp <- na.omit(smp)   
+
+#band correlation
+#pairs(img)
+
+#pixel number for class
+summary(smp$cl)
+  
+str(smp)
+
+#aggregate mean value for each band for each class
+sp <- aggregate( . ~ cl, data = smp, FUN = function(x) c(mean = mean(x), se = std.error(x)))
+    
+     
+head(sp)
+  
+ms <- matrix(NA, nrow = length(unique(shp$id)), ncol = nlayers(img))
+library(gmodels)
+library(Rmisc)
+     
+
+     
+     palette <- c("#75D054FF", "#FDE725FF", "#440154FF","#C7E020FF", "#365D8DFF")
+     
+mean_spectra = group_by(smp, cl) %>% #we group ref_values by class
+  summarise_all(mean) %>% #calculate mean value for each class
+  gather(bands, reflectance, -cl)%>%  #transform the df to "long" format
+  mutate(reflectance = reflectance/10000)
+
+
+mean_spectra$bands = factor(mean_spectra$bands, levels=c("B02", "B03", "B04", "B05", "B06", "B07", "B08","B11", "B12"))
+
+plot_sg_07_20_2 <- ggplot(mean_spectra, aes(bands, reflectance, color = cl, group = cl))+
+  geom_point()+
+  geom_line(size = 1.5, alpha = 0.8)+
+  ylim(0, 0.5)+
+  scale_color_manual(values =palette)+
+   geom_ribbon(data=sp$B02$healthy, aes(ymin = value-6.603722, ymax = value+6.603722), fill = "#75D054FF", alpha=0.3)+
+   
+                
+     PlotSpectraAsSigsWithUncertainty(
+  smp,
+  mean.weighted = TRUE,
+  conf.int = 0.95,
+  num.of.bootstrap.replicates = 10^4,
+  title = "Mean.as.signature"
+)
+
+
+ggsave(
+  filename = "plot_sg_07_20_2.tif",
+  plot = plot_sg_07_20_2,
+  device = "tiff",
+  path = "C:/vaia bostrico",
+  scale = 1,
+  width = NA,
+  height = NA,
+  units = c("in", "cm", "mm", "px"),
+  dpi = 300,
+  limitsize = TRUE,
+  bg = NULL)
+
+     #rf model  
+     
+  hre_seed<- 27
+ set.seed(hre_seed) 
+  inTraining <- createDataPartition(smp$cl,
+p = .70, list = FALSE)
+ training <- smp[ inTraining,]
+ testing <- smp[-inTraining,]
+  fitControl<- trainControl(method = "repeatedcv", 
+number = 5,
+repeats = 5)
+  
+set.seed(hre_seed) 
+     
+rf_model<-caret::train(cl~.,data=training, method="rf",
+trControl=fitControl, 
+prox=TRUE,
+fitBest = FALSE,
+returnData = TRUE)  
+  
+print(rf_model)  
+plot(rf_model) 
+  
+rf_model$finalModel
+rf_varImp <- varImp(rf_model, compete = FALSE)
+plot(rf_varImp)
+  
+pred_rf <- predict(rf_model$finalModel,
+newdata = testing)
+confusionMatrix(data = pred_rf, testing$cl)
+
+ rf_07_20 <-predict(covs, rf_model)
+ pl_rf_07_20 <- plot(rf_07_20, axes = FALSE, box = FALSE, col = c("#fbf793", "#FFDB6D", "#D16103", "black", "#d00000" ))  
+     
+raster::writeRaster(rf_07_20, filepath="C:/vaia bostrico", filename="classif_rf_07_20_2.tif", format='GTiff', overwrite=TRUE)
+
+#train ANN
+set.seed(hre_seed) 
+annFit <- caret::train(cl~., data = training,
+method = "nnet",
+preProcess = c("center", "scale"),
+trControl = fitControl)
+
+print(annFit)  
+plot(annFit)  
+annFit$finalModel  
+
+pred_annFit <- predict(annFit , newdata = testing)
+  
+confusionMatrix(data = pred_annFit, testing$cl) 
+
+ann_07_20 <-predict(covs,annFit)
+     
+     
+ann_07_20_MultiVariables1 <- gplot(ann_07_20) + 
+geom_raster(aes(fill = factor(value, 
+labels=c("bosco_sano", "bostrico_green", "bostrico_red", "ombre", "vaia")))) + 
+scale_fill_manual(values = c("chartreuse4", "darkgoldenrod1", 
+"brown2", "aliceblue", "burlywood"), name= "Land Cover") + 
+ggtitle("ANN Classification 07/20") +
+theme(plot.title = element_text(lineheight=.4, 
+face="bold")) + coord_equal()
+ann_07_20_MultiVariables1
+     
+pl_ann_07_20 <- plot(ann_07_20, axes = FALSE, box = FALSE, col = c("#fbf793", "#FFDB6D", "#D16103", "black", "#d00000" ))  
+raster::writeRaster(ann_07_20, filepath="C:/vaia bostrico", filename="classif_ann_07_20_2.tif", format='GTiff', overwrite=TRUE)
+plotnet(annFit$finalModel)
+olden(annFit)
+     
+#box plots 
+tiff(file="C:/vaia bostrico/box_plot_07_20_covs.tif")  
+featurePlot(x=training[,1:20],y=training$cl, 
+plot="box",
+scales=list(y=list(relation="free"), 
+x=list(rot=90)),
+layout=c(5,5),
+auto.key=list(colmns=5))
+ dev.off() 
+  
+# time series stressed stands for each variable 
+setwd("C:/vaia bostrico")
+punt_2020 <- shapefile("stressed_2020.shp")
+
+setwd("C:/vaia bostrico/TCW")
+rlist <-list.files(pattern=".tif$") 
+rlist
+import <- lapply(rlist,raster) 
+import 
+TCW_2020 <- stack(import) 
+
+
+
+B8_points <- raster::extract(TCW_2020, punt_2020, df = TRUE)
+#arrange dataframe to have 1 variable for each point
+B8_points_df_stressed <- gather(B8_points, key=date, value=value, -ID)
+B8_points_df_stressed
+           
+
+
+ B8_points_df_stressed_mean <- B8_points_df_stressed %>% group_by(date) %>% summarise_at(vars(value),funs(mean(.,na.rm=TRUE)))  
+                     
+
+
+
+
+                     
+#red attack stands
+setwd("C:/vaia bostrico")
+punt_2020 <- shapefile("red_attack_2020.shp")
+
+setwd("C:/vaia bostrico/TCW")
+rlist <-list.files(pattern=".tif$") 
+rlist
+import <- lapply(rlist,raster) 
+import 
+TCW_2020 <- stack(import) 
+
+
+
+B8_points <- raster::extract(B8_2020, NDVI_punt_2020, df = TRUE)
+#arrange dataframe to have 1 variable for each point
+B8_points_df_red <- gather(B8_points, key=date, value=value, -ID)
+B8_points_df_red
+B8_points_df_red      
+
+
+ B8_points_df_red_mean <- B8_points_df_red %>% group_by(date) %>% summarise_at(vars(value),funs(mean(.,na.rm=TRUE)))                 
+           
+
+
+
+#B5 time series healthy stands 
+setwd("C:/vaia bostrico")
+NDVI_bosco_sano <- shapefile("healthy_2020.shp")
+
+setwd("C:/vaia bostrico/TCW")
+rlist <-list.files(pattern=".tif$") 
+rlist
+import <- lapply(rlist,raster) 
+import 
+B5_2019 <- stack(import) 
+
+
+
+B8_points <- raster::extract(B5_2019, NDVI_bosco_sano, df = TRUE)
+#arrange dataframe to have 1 variable for each point
+B8_points_df <- gather(B8_points, key=date, value=value, -ID)
+B8_points_df
+ 
+
+
+B8_points_df_mean <- B8_points_df %>% group_by(date) %>% summarise_at(vars(value),funs(mean(.,na.rm=TRUE)))  
+                     
+
+
+B8_plot <- ggplot(data=B8_points_df_mean, aes(x=date, y=value, group=4))+
+  geom_line(data=B8_points_df_mean, aes(x=date, y=value, group=4, color="#75D054FF"), size = 1.4)+                   
+  geom_line(data=B8_points_df_stressed_mean, aes(x=date, y=value, group=4, color="#C7E020FF"), size = 1.4)+
+  geom_line(data=B8_points_df_red_mean, aes(x=date, y=value, group=4, color="#FDE725FF"), size= 1.4)+
+  geom_point(data=B8_points_df_stressed_mean,aes(x=date, y=value, group=4), color='black')+
+  geom_point(data=B8_points_df_mean, aes(x=date, y=value, group=4), color='black')+  
+  geom_point(data=B8_points_df_red_mean, aes(x=date, y=value, group=4), color='black')+   
+                    
+                     
+                     scale_color_manual(name = "variables", labels= c("healthy_2020", "stressed_2020","red_attack_2020"),values = c("#75D054FF", "#C7E020FF", "#FDE725FF"))+
+                      labs(title = "TCW time series")+
+                     geom_ribbon(data=B8_points_df_mean, aes(ymin = value-6.603722, ymax = value+6.603722), fill = "#75D054FF", alpha=0.3)+
+                     geom_ribbon(data=B8_points_df_stressed_mean, aes(ymin = value-6.865767, ymax = value+6.865767), fill = "#C7E020FF", alpha=0.3)+
+                     geom_ribbon(data=B8_points_df_red_mean, aes(ymin = value -11.01111 ,  ymax = value+ 11.01111  ), fill ="#FDE725FF", alpha=0.3)
+   B8_plot + expand_limits(y=c(0,0.3))             
+
+    
+ 
+     
+#omit NA                     
+   B8_points_df_red <-         na.omit(B8_points_df_red)   
+   B8_points_df_stressed <-         na.omit(B8_points_df_stressed)                       
+           B8_points_df <- na.omit(     B8_points_df )     
+                     
+                     
+                     #sd
+                 sd_healthy <-   sd(B8_points_df$value)
+                     
+                     
+ #confidence intervals                     
+library(gmodels)
+library(Rmisc)
+                     
+#healthy                     
+CI(B8_points_df$value)
+ #upper       mean      lower 
+ #-76.33316  -96.42112 -116.50908 
+                    
+
+ci(B8_points_df$value, confidence = 0.95)
+Estimate   CI lower   CI upper Std. Error 
+ # 61.16948   39.86157   82.47739   10.84040
+                     
+
+ 
+
+ #stressed                     
+CI(B8_points_df_stressed$value)
+
+
+ ci(B8_points_df_stressed$value, confidence = 0.95)
+Estimate    CI lower    CI upper  Std. Error 
+0.258036293 0.246346929 0.269725657 0.005947323 
+
+
+                     #red
+                     
+                     CI(B8_points_df_red$value)
+
+
+ ci(B8_points_df_red$value, confidence = 0.95)
+ Estimate   CI lower   CI upper Std. Error 
+ -469.3514  -505.9884  -432.7143    18.6421 
+
+               
+                     
+                     
+
+#openland change analysis
+setwd("C:/vaia bostrico")
+cr1_2018 <- raster("cr1_ann_07_18_2.tif")
+cr1_2019 <- raster("cr1_ann_07_19.tif")
+cr1_2020 <- raster("cr1_rf_07_20.tif")
+cr1_stk <- stack(cr1_2018,cr1_2019, cr1_2020)
+names(cr1_stk) <- c("cr1_2018", "cr1_2019", "cr1_2020")
+
+SL_2018_2020 <- contingencyTable(input_raster = cr1_stk, pixelresolution = 10)
+
+# editing the category name
+SL_2018_2020$tb_legend$categoryName <- factor(c("healthy", "red_attack", "shadows", "stressed", "vaia" ),
+                                  levels = c("healthy", "red_attack", "shadows","stressed", "vaia" ))
+                                  
+## add the color by the same order of the legend,
+## it can be the color name (eg. "black") or the HEX value (eg. #000000)
+SL_2018_2020$tb_legend$color <- c("#75D054FF", "#FDE725FF", "#440154FF","#C7E020FF", "#365D8DFF")
+testSL <- intensityAnalysis(dataset = SL_2018_2020,
+                            category_n = "healthy", category_m = "red_attack")
+#gain area
+plot(testSL$category_lvlGain,
+     labels = c(leftlabel = bquote("Gain Area (" ~ km^2 ~ ")"),
+                rightlabel = "Intensity Gain (%)"),
+     marginplot = c(.3, .3), labs = c("Categories", "Uniform Rate"), 
+     leg_curv = c(x = 5/10, y = 5/10))
+#loss area
+plot(testSL$category_lvlLoss,
+     labels = c(leftlabel = bquote("Loss Area (" ~ km^2 ~ ")"),
+                rightlabel = "Loss Intensity (%)"),
+     marginplot = c(.3, .3), labs = c("Categories", "Uniform Rate"), 
+     leg_curv = c(x = 5/10, y = 5/10))
+#gain of a specific category
+plot(testSL$transition_lvlGain_n,
+     labels = c(leftlabel = bquote("Gain of WHA (" ~ km^2 ~ ")"),
+                rightlabel = "Intensity Gain of WHA (%)"),
+     marginplot = c(.3, .3), labs = c("Categories", "Uniform Rate"), 
+     leg_curv = c(x = 5/10, y = 5/10))
+#loss of a specific category
+plot(testSL$transition_lvlLoss_m,
+     labels = c(leftlabel = bquote("Loss of DKW (" ~ km^2 ~ ")"),
+                rightlabel = "Intensity Loss of DKW (%)"),
+     marginplot = c(.3, .3), labs = c("Categories", "Uniform Rate"), 
+     leg_curv = c(x = 1/10, y = 5/10))
+#net and gross gain and loss
+netgrossplot(dataset = SL_2018_2020$lulc_Multistep,
+             legendtable = SL_2018_2020$tb_legend,
+             xlab = "LUC Category",
+             ylab = bquote("Area (" ~ km^2 ~ ")"),
+             changesLabel = c(GC = "Gross changes", NG = "Net Gain", NL = "Net Loss"),
+             color = c(GC = "gray70", NG = "#006400", NL = "#EE2C2C")
+             )
+#evolution bar plot
+barplotLand(dataset = SL_2018_2020$lulc_Multistep, 
+          legendtable = SL_2018_2020$tb_legend,
+          xlab = "Year",
+          ylab = bquote("Area (" ~ km^2~ ")"),
+          area_km2 = TRUE)
+testacc <- acc_changes(rig_stk)
+tmap_options(max.raster = c(plot = 41711112, view = 41711112))
+acc_map <- tmap::tm_shape(testacc[[1]]) +
+  tmap::tm_raster(
+     style = "cat",
+     labels = c(
+       paste0(testacc[[2]]$PxValue[1], " Change", " (", round(testacc[[2]]$Percent[1], 2), "%", ")"),
+       paste0(testacc[[2]]$PxValue[2], " Change", " (", round(testacc[[2]]$Percent[2], 2), "%", ")"),
+       paste0(testacc[[2]]$PxValue[3], " Changes", " (", round(testacc[[2]]$Percent[3], 2), "%", ")")
+     ),
+     palette = c("#757575", "#FFD700", "#CD0000"),
+     title = "Changes in the interval \n2018 - 2020"
+   ) +
+   tmap::tm_legend(
+     position = c(0.02, 0.75),
+     legend.title.size = 1.0,
+     legend.title.fontface = "bold",
+     legend.text.size = 0.7
+   ) +
+   tmap::tm_compass(type = "arrow",
+                    position = c("right", "top"),
+                    size = 3) +
+   tmap::tm_scale_bar(
+     breaks = c(seq(0, 1, 2)),
+     position = c(0.2, 0.2),
+     text.size = 0.6
+   ) +
+  
+   tmap::tm_graticules(
+     n.x = 6,
+     n.y = 6,
+     lines = FALSE,
+     #alpha = 0.1#     labels.rot = c(0, 90)
+   ) +
+   tmap::tm_layout(inner.margins = c(0.02, 0.02, 0.25, 0.02))
+
+
+
+#library(lulcc)
+library(lulcc)
+#> Loading required package: raster
+#> Loading required package: sp
+data(pie)
+obs <- ObsLulcRasterStack(x=rig_stk,
+                          pattern="rig",
+                          categories=c(1,2,3,4,5),
+                          labels=c("healthy","stressed","red_attack", "shadows", "vaia"),
+                          t=c(18,19,20))
+crossTabulate(obs, times=c(18,19))
+img_dif_07_18_19 <- ((rig_07_18 - rig_07_19)/(rig_07_18 + rig_07_19 ))^2
+img_dif_07_18_19_df <- as.data.frame(img_dif_07_18_19)
+#Image ratioing
+img_ratio_07_18_19 <- rig_07_18/rig_07_19
+freq(rig_07_18)
+#  value  count
+[1,]     1 506029
+[2,]     2  77798
+[3,]     3  47930
+[4,]     4  32750
+[5,]    NA 247573
+s1 <- 506029  + 77798  +  47930   + 32750 + 247573
+prop1 <- freq(rig_07_18) / s1
+ value      count
+[1,] 0.000001096395 0.55480769
+[2,] 0.000002192790 0.08529734
+[3,] 0.000003289185 0.05255021
+[4,] 0.000004385580 0.03590694
+[5,]             NA 0.27143781
+freq(rig_07_19)
+value  count
+[1,]     1 509397
+[2,]     2  52538
+[3,]     3 133761
+[4,]     4   3231
+[5,]     5  27068
+[6,]    NA 186085
+ 
+s2 <- 509397 + 52538 + 133761 +  3231 +  27068 + 186085
+prop2 <- freq(rig_07_19) / s2
+ value       count
+[1,] 0.000001096395 0.558500351
+[2,] 0.000002192790 0.057602403
+[3,] 0.000003289185 0.146654899
+[4,] 0.000004385580 0.003542452
+[5,] 0.000005481975 0.029677221
+[6,]             NA 0.204022673
+freq(rig_07_20)
+  value  count
+[1,]     1 544003
+[2,]     2  85105
+[3,]     3  77217
+[4,]     4  13434
+[5,]     5   6567
+[6,]    NA 185754
+ 
+s3 <- 544003 + 85105 + 77217 + 13434 +  6567 + 185754
+prop3 <- freq(rig_07_20) / s3
+ value       count
+[1,] 0.000001096395 0.596442198
+[2,] 0.000002192790 0.093308701
+[3,] 0.000003289185 0.084660337
+[4,] 0.000004385580 0.014728971
+[5,] 0.000005481975 0.007200026
+[6,]             NA 0.203659767
+ 
+#build dataframe
+cover <- c("healthy", "stressed", "red_attack", "shadows", "vaia", "NA")
+percent_07_18 <- c(55, 8, 5, 4 , 0, 27)
+percent_07_19 <- c(55, 6, 15, 0.4, 3, 20)
+percent_07_20 <- c(60, 9, 8, 1, 0.7, 20)
+percentages <- data.frame(cover, percent_07_18, percent_07_19, percent_07_20)
+percentages
+newcols <- c("green", "yellow", "red", "black", "turquoise", "grey")
+
+#build plots
+p1 <- ggplot(percentages, aes(x=cover, y=percent_07_18, color=class)) + geom_bar(stat="identity", fill="white", color=newcols )
+p2 <- ggplot(percentages, aes(x=cover, y=percent_07_19, color=class)) + geom_bar(stat="identity", fill="white", color=newcols)
+p3 <- ggplot(percentages, aes(x=cover, y=percent_07_20, color=class)) + geom_bar(stat="identity", fill="white", color=newcols)
+grid.arrange(p1, p2, p3, nrow=1)
+
+change_map_07_19_18 <- classif_07_18 - classif_07_19
+raster::writeRaster(change_map_07_19_18, filepath="C:/vaia bostrico", filename="change_map_07_19_18.tif", format='GTiff', overwrite=TRUE)
+
+clb<-colorRampPalette(c("blue", "white", "red"))(100) 
+plot(change_map_07_19_18, col=clb)
+levelplot(change_map_07_19_18, col.regions=clb)
+change_map_07_18_17 <- classif_07_18 - classif_06_17
+change_map_07_20_19 <- classif_07_20 - classif_07_19
+change_map_07_20_18 <- classif_07_20 - classif_07_18
+
+
+#forest change
+rig_07_18 <- rig_stk[["rig_2018"]]
+rig_07_20 <- rig_stk[["rig_2020"]]
+forloss <- rig_07_18  == 1 & rig_07_20 != 1
+forgain <- rig_07_18 != 1 &rig_07_20 == 1
+forchange <- 1 + forloss + forgain * 2
+names_chg <- c("No Change", "Forest Loss", "Forest Gain")
+cols_chg <- c("lightgrey", "red", "blue")
+forchange_df <- as.data.frame(forchange)
+p <-ggplot2::ggplot(forchange_df) +
+  geom_raster(data = forchange_df, aes(x = x, y = y, fill = forchange)) + 
+  scale_fill_manual(name = "Land cover",
+                    values = cols_chg,
+                    labels = names_chg,
+                    na.translate = FALSE) +
+  coord_sf(expand = F) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        panel.background = element_rect(fill = "white", color = "black"))
+plot(forchange, 
+     breaks = c(1,2,3,4), 
+     col = cols_chg,
+     main="forest change 2018_2020")
+     
+# First, expand right side of clipping rectangle to make room for the legend
+# turn xpd off
+par(xpd = FALSE, mar=c(5.1, 4.1, 4.1, 4.5))
+# Second, plot w/ no legend
+plot(forchange, col=cols_chg, breaks=c(1,2,3,4), main="forest change 2018_2020", legend = FALSE)
+# Third, turn xpd back on to force the legend to fit next to the plot.
+par(xpd = TRUE)
+# Fourth, add a legend - & make it appear outside of the plot
+legend(par()$usr[2], 5156000,
+        legend = c("no change", "forest loss", "forest gain"), 
+        fill = cols_chg)
+library(ggplot2)
+# convert to a df for plotting in two steps,
+# First, to a SpatialPointsDataFrame
+for_chg_pts <- rasterToPoints(forchange, spatial = TRUE)
+# Then to a 'conventional' dataframe
+forest_change_df  <- data.frame(for_chg_pts)
+rm(for_chg_pts, forest_change_df)
+aes(fill = factor(value
+setNames(freq_df, replace(names(layer) == '1'  Y_07_19))
+rig_chg <- freq_df %>%
+  mutate(km2 = count * 900 / 1000000) 
+ggplot(data = rig_chg) +
+  geom_line(aes(x = layer, y = km2, color = as.factor(value))) +
+  geom_point(aes(x = layer, y = km2, color = as.factor(value))) +
+  scale_color_manual(name = "Land Cover Class",
+                     values = newcols, 
+                     labels = newnames) +
+  labs(x = "Year", y = expression(Area~(km^2))) +
+  theme_classic()
+rig_chg <- rig_chg %>%
+  mutate(class = factor(value,
+                        levels = 1:10,
+                        labels = label))
+ggplot(data = rig_chg) +
+  geom_line(aes(x = layer, y = km2)) +
+  facet_wrap(~ class, ncol = 2) +
+  labs(x = "Year", y = expression(Area~(km^2))) +
+  theme_bw()
+ggplot(data = rig_chg) +
+  geom_line(aes(x = layer, y = km2)) +
+  facet_wrap(~ class, scales = "free_y", ncol = 4) +
+  labs(x = "Year", y = expression(Area~(km^2))) +
+  theme_bw()
+rig_stk_df  <- as.data.frame(rig_stk)
+changedf <- freq_df %>%
+  mutate(layer = factor(1:10, oldName <- "1", newName <- "07_19"))
+                        
+  
+freq_df
+changedf
+install.packages("lulcc")
+install.packages("tmap")
+setwd("C:/vaia bostrico")
+koe_07_18 <- raster("koetschach_rit_classif_ann_07_18.tif")
+koe_07_19 <- raster("koetschach_rit_classif_ann_07_19.tif")
+koe_07_20 <- raster("koetschach_rit_classif_ann_07_20.tif")
+forloss <- koe_07_18  == 1 & koe_07_20 != 1
+forgain <- koe_07_18 != 1 & koe_07_20 == 1
+forchange <- 1 + forloss + forgain * 2
+names_chg <- c("no change", "forest loss", "forest gain")
+cols_chg <- c("grey", "red", "blue")
+plot(forchange, 
+     breaks = c(1,2,3,4), 
+     col = cols_chg,
+     main="forest change 2018-2020")
+# First, expand right side of clipping rectangle to make room for the legend
+# turn xpd off
+par(xpd = FALSE, mar=c(5.1, 4.1, 4.1, 4.5))
+# Second, plot w/ no legend
+plot(forchange, col=cols_chg, breaks=c(1,2,3,4), main="forest change 2018-2020", legend = FALSE)
+# Third, turn xpd back on to force the legend to fit next to the plot.
+par(xpd = TRUE)
+# Fourth, add a legend - & make it appear outside of the plot
+legend(par()$usr[2], 5171000,
+        legend = c("no change", "forest loss", "forest gain"), 
+        fill = cols_chg)
+setwd("C:/vaia bostrico")
+rig_07_18 <- raster("rit_classif_ann_07_18.tif")
+rig_07_19 <- raster("rit_classif_ann_07_19_2.tif")
+rig_07_20 <- raster("rit_classif_ann_07_20_2.tif")
+forloss <- rig_07_18  == 1 & rig_07_20!= 1
+forgain <- rig_07_18 != 1 & rig_07_20 == 1
+forchange <- 1 + forloss + forgain * 2
+names_chg <- c("no change", "forest loss", "forest gain")
+cols_chg <- c("grey", "red", "blue")
+plot(forchange, 
+     breaks = c(1,2,3,4), 
+     col = cols_chg,
+     main="forest change 2018-2020")
+# First, expand right side of clipping rectangle to make room for the legend
+# turn xpd off
+par(xpd = FALSE, mar=c(5.1, 4.1, 4.1, 4.5))
+# Second, plot w/ no legend
+plot(forchange, col=cols_chg, breaks=c(1,2,3,4), main="forest change 2018-2020", legend = FALSE)
+# Third, turn xpd back on to force the legend to fit next to the plot.
+par(xpd = TRUE)
+# Fourth, add a legend - & make it appear outside of the plot
+legend(par()$usr[2], 5171000,
+        legend = c("no change", "forest loss", "forest gain"), 
+        fill = cols_chg)
+freq(koe_07_18)
+ value  count
+[1,]     1 113334
+[2,]     2  33510
+[3,]     3  34770
+[4,]     4    296
+[5,]    NA  39166
+s1 <-113334  + 33510  +  34770   + 296 + 39166
+prop1 <- freq(koe_07_18) / s1
+ value       count
+[1,] 4.523331e-06 0.512647234
+[2,] 9.046663e-06 0.151576833
+[3,] 1.356999e-05 0.157276231
+[4,] 1.809333e-05 0.001338906
+[5,]           NA 0.177160795
+freq(koe_07_19)
+ value count
+[1,]     1 85560
+[2,]     2 24187
+[3,]     3 48957
+[4,]     4   483
+[5,]     5 22739
+[6,]    NA 39150
+ 
+s2 <- 85560 + 24187 + 48957+   483 +  22739 + 39150
+prop2 <- freq(koe_07_19) / s2
+ value       count
+[1,] 4.523331e-06 0.387016230
+[2,] 9.046663e-06 0.109405815
+[3,] 1.356999e-05 0.221448733
+[4,] 1.809333e-05 0.002184769
+[5,] 2.261666e-05 0.102856031
+[6,]           NA 0.177088422
+freq(koe_07_20)
+  value  count
+ value count
+[1,]     1 91240
+[2,]     2 21432
+[3,]     3 48072
+[4,]     4  5820
+[5,]     5 14867
+[6,]    NA 39645
+ 
+s3 <- 91240 + 21432 + 48072 + 5820 + 14867 + 39645
+prop3 <- freq(koe_07_20) / s3
+  value      count
+[1,] 4.523331e-06 0.41270875
+[2,] 9.046663e-06 0.09694404
+[3,] 1.356999e-05 0.21744558
+[4,] 1.809333e-05 0.02632579
+[5,] 2.261666e-05 0.06724837
+[6,]           NA 0.17932747
+ 
+#build dataframe
+cover <- c("healthy", "stressed", "red_attack", "shadows", "vaia", "NA")
+percent_07_18 <- c(51, 15, 16, 0.1 , 0, 17)
+percent_07_19 <- c(39, 10, 22, 0.2,10, 17)
+percent_07_20 <- c(41, 9, 21, 0.2, 7, 18)
+percentages <- data.frame(cover, percent_07_18, percent_07_19, percent_07_20)
+percentages
+#costruisci grafico plot
+p1 <- ggplot(percentages, aes(x=cover, y=percent_07_18, color=class)) + geom_bar(stat="identity", fill="white", color=newcols )
+p2 <- ggplot(percentages, aes(x=cover, y=percent_07_19, color=class)) + geom_bar(stat="identity", fill="white", color=newcols)
+p3 <- ggplot(percentages, aes(x=cover, y=percent_07_20, color=class)) + geom_bar(stat="identity", fill="white", color=newcols)
+grid.arrange(p1, p2, p3, nrow=1)
