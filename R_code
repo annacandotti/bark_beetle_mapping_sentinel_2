@@ -286,22 +286,7 @@ SWI_07_20 <- raster("SWI_2020_07_01.tif")
 setwd("C:/vaia bostrico/LST")
 LST_07_20 <- raster("LST2_C_2020_07_07.tif")
      
-x <- raster()
-x
-                      
-projection(x) <- " +proj=utm +zone=33 +datum=WGS84 +units=m +no_defs"
-x
 
-setwd("C:/vaia bostrico/m2_stack_07_20")
-r <- raster("m2_stack_07_20_1.tif")
-
-#set extent
-ext <- setExtent(x, r, keepres=TRUE, snap=FALSE)
-extent(x) <- ext
-
-# change resolution
-res(x) <- 10
-res(x)
 
 # Create raster template
 template_rst <- x   
